@@ -6,6 +6,11 @@ on:
       version:
         description: "Version (e.g. 10.24.0-release.0). Empty = Auto."
         required: false
+      prerelease:
+        description: "Use Pre-releases"
+        type: boolean
+        default: false
+        required: false
   schedule:
     - cron: "0 23 * * *"
 
@@ -15,6 +20,7 @@ jobs:
     outputs:
       version: ${{ steps.scrape.outputs.version }}
       piko_tag: ${{ steps.scrape.outputs.piko_tag }}
+      int_tag: ${{ steps.scrape.outputs.int_tag }}
       build_tag: ${{ steps.scrape.outputs.build_tag }}
       should_build: ${{ steps.scrape.outputs.should_build }}
     steps:
@@ -30,9 +36,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_VER: ${{ inputs.version }}
+          USE_PRE: ${{ inputs.prerelease }}
           UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         run: |
           BASE="https://www.apkmirror.com"
+
           if [ -n "$INPUT_VER" ]; then
             VER="$INPUT_VER"
             CLEAN=$(echo "$VER" | tr '.' '-')
@@ -49,8 +57,18 @@ jobs:
             exit 1
           fi
 
-          PIKO=$(gh release view --repo crimera/piko --json tagName -t '{{.tagName}}')
+          if [ "$USE_PRE" == "true" ]; then
+             echo "Fetching latest tags (including pre-releases)..."
+             PIKO=$(gh release list --repo crimera/piko --limit 1 --json tagName --jq '.[0].tagName')
+             INT=$(gh release list --repo crimera/revanced-integrations --limit 1 --json tagName --jq '.[0].tagName')
+          else
+             echo "Fetching latest stable releases..."
+             PIKO=$(gh release view --repo crimera/piko --json tagName --jq '.tagName')
+             INT=$(gh release view --repo crimera/revanced-integrations --json tagName --jq '.tagName')
+          fi
+
           BUILD_TAG="v${VER}-${PIKO}"
+          echo "Twitter: $VER | Piko: $PIKO | Int: $INT | Tag: $BUILD_TAG"
 
           echo "Twitter: $VER | Piko: $PIKO | Tag: $BUILD_TAG"
 
@@ -62,6 +80,7 @@ jobs:
 
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "piko_tag=$PIKO" >> $GITHUB_OUTPUT
+          echo "int_tag=$INT" >> $GITHUB_OUTPUT
           echo "build_tag=$BUILD_TAG" >> $GITHUB_OUTPUT
           echo "path=$PATH_VER" >> $GITHUB_OUTPUT
 
@@ -141,10 +160,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VER: ${{ needs.prepare.outputs.version }}
+          PIKO_TAG: ${{ needs.prepare.outputs.piko_tag }}
+          INT_TAG: ${{ needs.prepare.outputs.int_tag }}
         run: |
           gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins && mv bins/revanced-cli*.jar bins/cli.jar
-          gh release download --repo crimera/piko -p "piko*.jar" -D bins && mv bins/piko*.jar bins/patches.jar
-          gh release download --repo crimera/revanced-integrations -p "rev*.apk" -D bins && mv bins/rev*.apk bins/integrations.apk
+          gh release download "$PIKO_TAG" --repo crimera/piko -p "piko*.jar" -D bins && mv bins/piko*.jar bins/patches.jar
+          gh release download "$INT_TAG" --repo crimera/revanced-integrations -p "rev*.apk" -D bins && mv bins/rev*.apk bins/integrations.apk
 
           java -jar bins/cli.jar patch \
             -b bins/patches.jar \
@@ -181,6 +202,8 @@ jobs:
     if: needs.prepare.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
