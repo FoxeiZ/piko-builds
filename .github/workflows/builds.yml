@@ -44,13 +44,16 @@ jobs:
             VER=${VER%.}
           fi
 
-          # 2. Resolve Piko & Build Tags
+          if [ -z "$VER" ]; then
+            echo "Error: Could not resolve version."
+            exit 1
+          fi
+
           PIKO=$(gh release view --repo crimera/piko --json tagName -t '{{.tagName}}')
           BUILD_TAG="v${VER}-${PIKO}"
 
           echo "Twitter: $VER | Piko: $PIKO | Tag: $BUILD_TAG"
 
-          # 3. Check for existing release
           if [ -n "$INPUT_VER" ] || ! gh release view "$BUILD_TAG" >/dev/null 2>&1; then
              echo "should_build=true" >> $GITHUB_OUTPUT
           else
@@ -68,6 +71,7 @@ jobs:
           UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
           BASE: "https://www.apkmirror.com"
           PATH_VER: ${{ steps.scrape.outputs.path }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # get variant
           PAGE=$(curl -sL -H "User-Agent: $UA" "$BASE$PATH_VER")
@@ -75,22 +79,24 @@ jobs:
             grep -oP 'href="/apk/x-corp/twitter/x-[^"]*download/' | \
             head -n1 | sed 's/href="//')
 
+          if [ -z "$PATH_VAR" ]; then echo "Error: Variant not found"; exit 1; fi
+
           # get download page
           PATH_DL=$(curl -sL -H "User-Agent: $UA" "$BASE$PATH_VAR" | grep -oP 'href="/apk/x-corp/twitter/x-[^"]*key=[^"]*"' | head -n1 | sed 's/href="//;s/"//')
+
+          if [ -z "$PATH_DL" ]; then echo "Error: Download Key page not found"; exit 1; fi
+
+          # get direct link
           DIRECT=$(curl -sL -H "User-Agent: $UA" "$BASE$PATH_DL" | grep -oP 'id="download-link".*?href="\K[^"]+' | sed "s/&amp;/\&/g; s|^/|$BASE/|")
-          if [ -z "$DIRECT" ]; then
-            echo "Failed to find direct download link."
-            exit 1
-          fi
+          if [ -z "$DIRECT" ]; then echo "Error: Direct link not found"; exit 1; fi
 
           echo "Downloading: $DIRECT"
           curl -L -H "User-Agent: $UA" -o twitter_base_apkmirror.apkm "$DIRECT"
 
-          # merge bundle
+          # merge
           gh release download --repo REAndroid/APKEditor -p "*.jar"
           mv APKEditor-*.jar apkeditor.jar
-          java -jar apkeditor.jar m -i twitter_base_apkmirror.apkm
-          mv twitter_base_apkmirror_merged.apk base.apk
+          java -jar apkeditor.jar m -i twitter_base_apkmirror.apkm -o base.apk
 
       - if: steps.scrape.outputs.should_build == 'true'
         uses: actions/upload-artifact@v4
@@ -168,7 +174,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.variant.name }}
-          path: "*.apk"
+          path: "${{ matrix.variant.name }}-v${{ needs.prepare.outputs.version }}.apk"
 
   release:
     needs: [prepare, build]
