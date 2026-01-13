@@ -137,15 +137,15 @@ jobs:
         variant:
           - name: x-piko
             inc: ""
-            exc: "--exclude 'Dynamic color'"
+            exc: "Dynamic color"
           - name: x-piko-material-you
             inc: ""
             exc: ""
           - name: twitter-piko
-            inc: "--include 'Bring back twitter'"
-            exc: "--exclude 'Dynamic color'"
+            inc: "Bring back twitter"
+            exc: "Dynamic color"
           - name: twitter-piko-material-you
-            inc: "--include 'Bring back twitter'"
+            inc: "Bring back twitter"
             exc: ""
     steps:
       - uses: actions/checkout@v4
@@ -165,43 +165,75 @@ jobs:
           VER: ${{ needs.prepare.outputs.version }}
           PIKO_TAG: ${{ needs.prepare.outputs.piko_tag }}
           INT_TAG: ${{ needs.prepare.outputs.int_tag }}
+          EXTRA_INC: ${{ matrix.variant.inc }}
+          EXTRA_EXC: ${{ matrix.variant.exc }}
         run: |
           gh release download "$PIKO_TAG" --repo crimera/piko -p "*.jar" -p "*.rvp" -D bins
-          if ls bins/*.rvp 1> /dev/null 2>&1; then
-            echo "using RVP patches"
-            mv bins/*.rvp bins/patches.rvp
-            gh release download --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
-            PATCH_ARGS="-p bins/patches.rvp"
-          else
-            echo "using JAR patches"
-            mv bins/*.jar bins/patches.jar             
-            gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
-            gh release download "$INT_TAG" --repo crimera/revanced-integrations -p "revanced*.apk" -D bins && mv bins/revanced*.apk bins/integrations.apk 
-            PATCH_ARGS="-b bins/patches.jar -m bins/integrations.apk"
-          fi
-          mv bins/revanced-cli*.jar bins/cli.jar
+          COMMON_PATCHES=(
+            "Enable app downgrading"
+            "Hide FAB"
+            "Disable chirp font"
+            "Add ability to copy media link"
+            "Hide Banner"
+            "Hide promote button"
+            "Hide Community Notes"
+            "Delete from database"
+            "Customize Navigation Bar items"
+            "Remove premium upsell"
+            "Control video auto scroll"
+            "Force enable translate"
+          )
 
-          java -jar bins/cli.jar patch \
-            $PATCH_ARGS \
+          if ls bins/*.rvp 1> /dev/null 2>&1; then
+            echo "RVP detected."
+            mv bins/*.rvp bins/patches.rvp
+
+            gh release download --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
+            mv bins/revanced-cli*.jar bins/cli.jar
+            
+            BASE_ARGS=( "patch" "-p" "bins/patches.rvp" )
+            INC_FLAG="-e"
+            EXC_FLAG="-d"
+            
+          else
+            echo "JAR detected (legacy mode)."
+            mv bins/*.jar bins/patches.jar
+            
+            gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
+            mv bins/revanced-cli*.jar bins/cli.jar
+            
+            gh release download "$INT_TAG" --repo crimera/revanced-integrations -p "revanced*.apk" -D bins
+            mv bins/revanced*.apk bins/integrations.apk
+
+            BASE_ARGS=( "patch" "-b" "bins/patches.jar" "-m" "bins/integrations.apk" )
+            INC_FLAG="--include"
+            EXC_FLAG="--exclude"
+          fi
+
+          PATCH_ARGS=()
+          for patch in "${COMMON_PATCHES[@]}"; do
+             PATCH_ARGS+=( "$INC_FLAG" "$patch" )
+          done
+
+          # Add Matrix Extras (if they exist)
+          if [ -n "$EXTRA_INC" ]; then
+             PATCH_ARGS+=( "$INC_FLAG" "$EXTRA_INC" )
+          fi
+          if [ -n "$EXTRA_EXC" ]; then
+             PATCH_ARGS+=( "$EXC_FLAG" "$EXTRA_EXC" )
+          fi
+
+          # 5. Execute Patch
+          echo "Running patcher with ${#PATCH_ARGS[@]} variable arguments..."
+
+          java -jar bins/cli.jar \
+            "${BASE_ARGS[@]}" \
+            "${PATCH_ARGS[@]}" \
             --keystore ks.keystore \
             --keystore-entry-password "123456789" \
             --keystore-password "123456789" \
             --signer jhc \
             --keystore-entry-alias jhc \
-            --include "Enable app downgrading" \
-            --include "Hide FAB" \
-            --include "Disable chirp font" \
-            --include "Add ability to copy media link" \
-            --include "Hide Banner" \
-            --include "Hide promote button" \
-            --include "Hide Community Notes" \
-            --include "Delete from database" \
-            --include "Customize Navigation Bar items" \
-            --include "Remove premium upsell" \
-            --include "Control video auto scroll" \
-            --include "Force enable translate" \
-            ${{ matrix.variant.inc }} \
-            ${{ matrix.variant.exc }} \
             --out "${{ matrix.variant.name }}-v${VER}.apk" \
             base.apk
 
