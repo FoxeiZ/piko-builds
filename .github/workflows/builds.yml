@@ -1,0 +1,189 @@
+name: Builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. 10.24.0-release.0). Empty = Auto."
+        required: false
+  schedule:
+    - cron: "0 23 * * *"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.scrape.outputs.version }}
+      piko_tag: ${{ steps.scrape.outputs.piko_tag }}
+      build_tag: ${{ steps.scrape.outputs.build_tag }}
+      should_build: ${{ steps.scrape.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Check Version & Tags
+        id: scrape
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VER: ${{ inputs.version }}
+          UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        run: |
+          BASE="https://www.apkmirror.com"
+          if [ -n "$INPUT_VER" ]; then
+            VER="$INPUT_VER"
+            CLEAN=$(echo "$VER" | tr '.' '-')
+            PATH_VER="/apk/x-corp/twitter/x-${CLEAN}-release/"
+          else
+            PATH_VER=$(curl -s -H "User-Agent: $UA" "$BASE/apk/x-corp/twitter/" | \
+              grep -oP 'href="/apk/x-corp/twitter/x-[^"]*-release/"' | head -n1 | sed 's/href="//;s/"//')
+            VER=$(echo "$PATH_VER" | sed -E 's/.*x-([0-9.-]+)-release.*/\1/' | tr '-' '.')
+            VER=${VER%.}
+          fi
+
+          # 2. Resolve Piko & Build Tags
+          PIKO=$(gh release view --repo crimera/piko --json tagName -t '{{.tagName}}')
+          BUILD_TAG="v${VER}-${PIKO}"
+
+          echo "Twitter: $VER | Piko: $PIKO | Tag: $BUILD_TAG"
+
+          # 3. Check for existing release
+          if [ -n "$INPUT_VER" ] || ! gh release view "$BUILD_TAG" >/dev/null 2>&1; then
+             echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+             echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "piko_tag=$PIKO" >> $GITHUB_OUTPUT
+          echo "build_tag=$BUILD_TAG" >> $GITHUB_OUTPUT
+          echo "path=$PATH_VER" >> $GITHUB_OUTPUT
+
+      - name: Download & Merge Bundle
+        if: steps.scrape.outputs.should_build == 'true'
+        env:
+          UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+          BASE: "https://www.apkmirror.com"
+          PATH_VER: ${{ steps.scrape.outputs.path }}
+        run: |
+          # get variant
+          PAGE=$(curl -sL -H "User-Agent: $UA" "$BASE$PATH_VER")
+          PATH_VAR=$(echo "$PAGE" | sed 's/<div class="table-row/\n<div class="table-row/g' | \
+            grep -oP 'href="/apk/x-corp/twitter/x-[^"]*download/' | \
+            head -n1 | sed 's/href="//')
+
+          # get download page
+          PATH_DL=$(curl -sL -H "User-Agent: $UA" "$BASE$PATH_VAR" | grep -oP 'href="/apk/x-corp/twitter/x-[^"]*key=[^"]*"' | head -n1 | sed 's/href="//;s/"//')
+          DIRECT=$(curl -sL -H "User-Agent: $UA" "$BASE$PATH_DL" | grep -oP 'id="download-link".*?href="\K[^"]+' | sed "s/&amp;/\&/g; s|^/|$BASE/|")
+          if [ -z "$DIRECT" ]; then
+            echo "Failed to find direct download link."
+            exit 1
+          fi
+
+          echo "Downloading: $DIRECT"
+          curl -L -H "User-Agent: $UA" -o twitter_base_apkmirror.apkm "$DIRECT"
+
+          # merge bundle
+          gh release download --repo REAndroid/APKEditor -p "*.jar"
+          mv APKEditor-*.jar apkeditor.jar
+          java -jar apkeditor.jar m -i twitter_base_apkmirror.apkm
+          mv twitter_base_apkmirror_merged.apk base.apk
+
+      - if: steps.scrape.outputs.should_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: base-apk
+          path: base.apk
+          retention-days: 1
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - name: x-piko
+            inc: ""
+            exc: "--exclude 'Dynamic color'"
+          - name: x-piko-material-you
+            inc: ""
+            exc: ""
+          - name: twitter-piko
+            inc: "--include 'Bring back twitter'"
+            exc: "--exclude 'Dynamic color'"
+          - name: twitter-piko-material-you
+            inc: "--include 'Bring back twitter'"
+            exc: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: base-apk
+
+      - name: Patch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.prepare.outputs.version }}
+        run: |
+          gh release download --repo ReVanced/revanced-cli -p "*.jar" -D bins && mv bins/revanced-cli-*.jar bins/cli.jar
+          gh release download --repo crimera/piko -p "patches.jar" -D bins
+          gh release download --repo crimera/revanced-integrations -p "*.apk" -D bins && mv bins/revanced-integrations-*.apk bins/integrations.apk
+
+          eval java -jar bins/cli.jar patch \
+            -b bins/patches.jar \
+            -m bins/integrations.apk \
+            --keystore ks.keystore \
+            --keystore-entry-password "123456789" \
+            --keystore-password "123456789" \
+            --signer jhc \
+            --keystore-entry-alias jhc \
+            --include "Enable app downgrading" \
+            --include "Hide FAB" \
+            --include "Disable chirp font" \
+            --include "Add ability to copy media link" \
+            --include "Hide Banner" \
+            --include "Hide promote button" \
+            --include "Hide Community Notes" \
+            --include "Delete from database" \
+            --include "Customize Navigation Bar items" \
+            --include "Remove premium upsell" \
+            --include "Control video auto scroll" \
+            --include "Force enable translate" \
+            ${{ matrix.variant.inc }} \
+            ${{ matrix.variant.exc }} \
+            --out "${{ matrix.variant.name }}-v${VER}.apk" \
+            base.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.variant.name }}
+          path: "*.apk"
+
+  release:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: "*-piko*"
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.build_tag }}
+          BODY: "Twitter: ${{ needs.prepare.outputs.version }}\nPiko: ${{ needs.prepare.outputs.piko_tag }}"
+        run: gh release create "$TAG" -t "$TAG" -n "$BODY" --latest artifacts/*.apk
