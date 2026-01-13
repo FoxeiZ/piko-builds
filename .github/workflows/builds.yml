@@ -260,4 +260,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.build_tag }}
           BODY: "Twitter: ${{ needs.prepare.outputs.version }}\nPiko: ${{ needs.prepare.outputs.piko_tag }}"
-        run: gh release create "$TAG" -t "$TAG" -n "$BODY" --latest artifacts/*.apk
+          USE_PRE: ${{ inputs.prerelease }}
+        run: |
+          if [ "$USE_PRE" == "true" ]; then
+            FLAG="--prerelease"
+          else
+            FLAG="--latest"
+          fi
+          gh release create "$TAG" -t "$TAG" -n "$BODY" $FLAG artifacts/*.apk
