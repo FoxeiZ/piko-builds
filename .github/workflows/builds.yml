@@ -168,23 +168,21 @@ jobs:
         run: |
           gh release download "$PIKO_TAG" --repo crimera/piko -p "*.jar" -p "*.rvp" -D bins
           if ls bins/*.rvp 1> /dev/null 2>&1; then
-             echo "using RVP patches"
-             mv bins/*.rvp bins/patches.rvp
-             gh release download --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
-             PATCH_ARGS="-p bins/patches.rvp"
+            echo "using RVP patches"
+            mv bins/*.rvp bins/patches.rvp
+            gh release download --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
+            PATCH_ARGS="-p bins/patches.rvp"
           else
-             echo "using JAR patches"
-             mv bins/*.jar bins/patches.jar             
-             gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
-             PATCH_ARGS="-b bins/patches.jar"
+            echo "using JAR patches"
+            mv bins/*.jar bins/patches.jar             
+            gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
+            gh release download "$INT_TAG" --repo crimera/revanced-integrations -p "revanced*.apk" -D bins && mv bins/revanced*.apk bins/integrations.apk 
+            PATCH_ARGS="-b bins/patches.jar -m bins/integrations.apk"
           fi
           mv bins/revanced-cli*.jar bins/cli.jar
 
-          gh release download "$INT_TAG" --repo crimera/revanced-integrations -p "revanced*.apk" -D bins && mv bins/revanced*.apk bins/integrations.apk
-
           java -jar bins/cli.jar patch \
             $PATCH_ARGS \
-            -m bins/integrations.apk \
             --keystore ks.keystore \
             --keystore-entry-password "123456789" \
             --keystore-password "123456789" \
