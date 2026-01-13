@@ -11,6 +11,12 @@ on:
         type: boolean
         default: false
         required: false
+      includes:
+        description: "Manual Includes (comma separated)"
+        required: false
+      excludes:
+        description: "Manual Excludes (comma separated)"
+        required: false
   schedule:
     - cron: "0 23 * * *"
 
@@ -165,67 +171,71 @@ jobs:
           VER: ${{ needs.prepare.outputs.version }}
           PIKO_TAG: ${{ needs.prepare.outputs.piko_tag }}
           INT_TAG: ${{ needs.prepare.outputs.int_tag }}
-          EXTRA_INC: ${{ matrix.variant.inc }}
-          EXTRA_EXC: ${{ matrix.variant.exc }}
+          MATRIX_INC: ${{ matrix.variant.inc }}
+          MATRIX_EXC: ${{ matrix.variant.exc }}
+          MANUAL_INC: ${{ inputs.includes }}
+          MANUAL_EXC: ${{ inputs.excludes }}
         run: |
           gh release download "$PIKO_TAG" --repo crimera/piko -p "*.jar" -p "*.rvp" -D bins
-          COMMON_PATCHES=(
-            "Enable app downgrading"
-            "Hide FAB"
-            "Disable chirp font"
-            "Add ability to copy media link"
-            "Hide Banner"
-            "Hide promote button"
-            "Hide Community Notes"
-            "Delete from database"
-            "Customize Navigation Bar items"
-            "Remove premium upsell"
-            "Control video auto scroll"
-            "Force enable translate"
-          )
+
+          IFS=',' read -r -a MATRIX_INC_ARR <<< "$MATRIX_INC"
+          IFS=',' read -r -a MATRIX_EXC_ARR <<< "$MATRIX_EXC"
+          IFS=',' read -r -a MANUAL_INC_ARR <<< "$MANUAL_INC"
+          IFS=',' read -r -a MANUAL_EXC_ARR <<< "$MANUAL_EXC"
+
+          PATCH_ARGS=()
+          add_patch() {
+            local flag=$1
+            local name=$(echo "$2" | xargs) # trim whitespace
+            if [ -n "$name" ]; then
+              PATCH_ARGS+=( "$flag" "$name" )
+            fi
+          }
 
           if ls bins/*.rvp 1> /dev/null 2>&1; then
-            echo "RVP detected."
+            echo ">> RVP detected"
             mv bins/*.rvp bins/patches.rvp
-
             gh release download --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
             mv bins/revanced-cli*.jar bins/cli.jar
-            
+
             BASE_ARGS=( "patch" "-p" "bins/patches.rvp" )
             INC_FLAG="-e"
             EXC_FLAG="-d"
             
           else
-            echo "JAR detected (legacy mode)."
+            echo ">> JAR detected (legacy)"
             mv bins/*.jar bins/patches.jar
-            
             gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins
             mv bins/revanced-cli*.jar bins/cli.jar
-            
             gh release download "$INT_TAG" --repo crimera/revanced-integrations -p "revanced*.apk" -D bins
             mv bins/revanced*.apk bins/integrations.apk
 
             BASE_ARGS=( "patch" "-b" "bins/patches.jar" "-m" "bins/integrations.apk" )
             INC_FLAG="--include"
             EXC_FLAG="--exclude"
+            COMMON_PATCHES=(
+              "Enable app downgrading"
+              "Hide FAB"
+              "Disable chirp font"
+              "Add ability to copy media link"
+              "Hide Banner"
+              "Hide promote button"
+              "Hide Community Notes"
+              "Delete from database"
+              "Customize Navigation Bar items"
+              "Remove premium upsell"
+              "Control video auto scroll"
+              "Force enable translate"
+            )
+            for p in "${COMMON_PATCHES[@]}"; do add_patch "$INC_FLAG" "$p"; done
           fi
 
-          PATCH_ARGS=()
-          for patch in "${COMMON_PATCHES[@]}"; do
-             PATCH_ARGS+=( "$INC_FLAG" "$patch" )
-          done
+          for p in "${MATRIX_INC_ARR[@]}"; do add_patch "$INC_FLAG" "$p"; done
+          for p in "${MATRIX_EXC_ARR[@]}"; do add_patch "$EXC_FLAG" "$p"; done
+          for p in "${MANUAL_INC_ARR[@]}"; do add_patch "$INC_FLAG" "$p"; done
+          for p in "${MANUAL_EXC_ARR[@]}"; do add_patch "$EXC_FLAG" "$p"; done
 
-          # Add Matrix Extras (if they exist)
-          if [ -n "$EXTRA_INC" ]; then
-             PATCH_ARGS+=( "$INC_FLAG" "$EXTRA_INC" )
-          fi
-          if [ -n "$EXTRA_EXC" ]; then
-             PATCH_ARGS+=( "$EXC_FLAG" "$EXTRA_EXC" )
-          fi
-
-          # 5. Execute Patch
-          echo "Running patcher with ${#PATCH_ARGS[@]} variable arguments..."
-
+          echo "Running patcher with ${#PATCH_ARGS[@]} arguments..."
           java -jar bins/cli.jar \
             "${BASE_ARGS[@]}" \
             "${PATCH_ARGS[@]}" \
