@@ -146,7 +146,7 @@ jobs:
           gh release download --repo crimera/piko -p "piko*.jar" -D bins && mv bins/piko*.jar bins/patches.jar
           gh release download --repo crimera/revanced-integrations -p "rev*.apk" -D bins && mv bins/rev*.apk bins/integrations.apk
 
-          eval java -jar bins/cli.jar patch \
+          java -jar bins/cli.jar patch \
             -b bins/patches.jar \
             -m bins/integrations.apk \
             --keystore ks.keystore \
