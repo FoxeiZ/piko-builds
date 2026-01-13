@@ -142,9 +142,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VER: ${{ needs.prepare.outputs.version }}
         run: |
-          gh release download --repo ReVanced/revanced-cli -p "*.jar" -D bins && mv bins/revanced-cli-*.jar bins/cli.jar
-          gh release download --repo crimera/piko -p "patches.jar" -D bins
-          gh release download --repo crimera/revanced-integrations -p "*.apk" -D bins && mv bins/revanced-integrations-*.apk bins/integrations.apk
+          gh release download v4.6.2 --repo inotia00/revanced-cli -p "revanced-cli*.jar" -D bins && mv bins/revanced-cli*.jar bins/cli.jar
+          gh release download --repo crimera/piko -p "piko*.jar" -D bins && mv bins/piko*.jar bins/patches.jar
+          gh release download --repo crimera/revanced-integrations -p "rev*.apk" -D bins && mv bins/rev*.apk bins/integrations.apk
 
           eval java -jar bins/cli.jar patch \
             -b bins/patches.jar \
